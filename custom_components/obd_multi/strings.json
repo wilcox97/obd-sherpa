@@ -13,6 +13,10 @@
         "title": "OBD adapter found",
         "description": "Found and connected to {name}. Add it?"
       },
+      "auto_vehicle_detected": {
+        "title": "Vehicle auto-detected",
+        "description": "VIN decoded to {year} {make} {model}. Imported {count} PIDs from OBDb ({repo}). Continue to add more, or finish here."
+      },
       "wifi": {
         "title": "WiFi ELM327",
         "data": { "host": "Host / IP address", "port": "Port" }

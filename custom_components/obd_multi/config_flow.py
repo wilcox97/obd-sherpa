@@ -49,10 +49,21 @@ from .transport import BleTransport, BtClassicTransport, ElmTransportError, Wifi
 
 _LOGGER = logging.getLogger(__name__)
 
-async def _vehicle_title(client: Elm327Client, fallback: str) -> str:
-    """Best-effort friendly name: use VIN if the vehicle will give it up, else fallback."""
+def _vin_last4(vin: str | None) -> str | None:
+    return vin[-4:] if vin and len(vin) >= 4 else None
+
+
+async def _vehicle_title_and_vin(client: Elm327Client, fallback: str) -> tuple[str, str | None]:
+    """Interim friendly name (last-4-of-VIN if available) + raw VIN.
+
+    This is a placeholder title only: if auto-detection later resolves a
+    Year/Make/Model via NHTSA, _try_auto_detect_vehicle overwrites self._title
+    with something like "2020 Chevrolet Bolt EV (...4567)" instead.
+    """
     vin = await client.read_vin()
-    return f"OBD ({vin})" if vin else fallback
+    last4 = _vin_last4(vin)
+    title = f"OBD (...{last4})" if last4 else fallback
+    return title, vin
 
 
 # Common BLE GATT UUID pairs used by cheap ELM327 clones (Veepeak/HM-10/LeLink-style).
@@ -70,6 +81,8 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._ble_candidates: dict[str, Any] = {}
         self._pending_ble_address: str | None = None
         self._title: str = "OBD Sherpa"
+        self._vin: str | None = None
+        self._auto_detect_attempted: bool = False
         self._discovery_info: BluetoothServiceInfoBleak | None = None
 
     async def async_step_bluetooth(self, discovery_info: BluetoothServiceInfoBleak) -> FlowResult:
@@ -89,7 +102,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 try:
                     client = Elm327Client(transport)
                     await client.connect_and_init()
-                    self._title = await _vehicle_title(client, discovery_info.name or discovery_info.address)
+                    self._title, self._vin = await _vehicle_title_and_vin(client, discovery_info.name or discovery_info.address)
                     await client.close()
                 except ElmTransportError:
                     continue
@@ -110,7 +123,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 client = Elm327Client(transport)
                 await client.connect_and_init()
-                self._title = await _vehicle_title(client, discovery_info.name or discovery_info.address)
+                self._title, self._vin = await _vehicle_title_and_vin(client, discovery_info.name or discovery_info.address)
                 await client.close()
             except ElmTransportError:
                 return self.async_abort(reason="cannot_connect")
@@ -143,7 +156,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 client = Elm327Client(transport)
                 await client.connect_and_init()
-                self._title = await _vehicle_title(client, f"OBD (WiFi {user_input[CONF_HOST]})")
+                self._title, self._vin = await _vehicle_title_and_vin(client, f"OBD (WiFi {user_input[CONF_HOST]})")
                 await client.close()
             except ElmTransportError as err:
                 _LOGGER.debug("WiFi probe failed: %s", err)
@@ -180,7 +193,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 try:
                     client = Elm327Client(transport)
                     await client.connect_and_init()
-                    self._title = await _vehicle_title(client, f"OBD (BT {user_input[CONF_BT_ADDRESS]})")
+                    self._title, self._vin = await _vehicle_title_and_vin(client, f"OBD (BT {user_input[CONF_BT_ADDRESS]})")
                     await client.close()
                 except ElmTransportError as err:
                     _LOGGER.debug("BT classic probe failed: %s", err)
@@ -252,7 +265,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 client = Elm327Client(transport)
                 await client.connect_and_init()
-                self._title = await _vehicle_title(client, f"OBD (BLE {address})")
+                self._title, self._vin = await _vehicle_title_and_vin(client, f"OBD (BLE {address})")
                 await client.close()
             except ElmTransportError:
                 continue
@@ -288,7 +301,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             try:
                 client = Elm327Client(transport)
                 await client.connect_and_init()
-                self._title = await _vehicle_title(client, f"OBD (BLE {address})")
+                self._title, self._vin = await _vehicle_title_and_vin(client, f"OBD (BLE {address})")
                 await client.close()
             except ElmTransportError:
                 return self.async_show_form(
@@ -313,11 +326,79 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ---------------- Custom PIDs (optional) ----------------
 
     async def async_step_custom_pids(self, user_input=None) -> FlowResult:
-        """Optional: paste a CSV, import from OBDb, or skip and finish with just standard PIDs."""
+        """Try VIN -> NHTSA -> OBDb auto-detection once, then show the CSV/OBDb/skip menu.
+
+        Auto-detection only ever ADDS vehicle-specific PIDs on top of the
+        standard set that's already active; if the VIN can't be decoded, or
+        NHTSA's Make/Model doesn't match anything in OBDb, it silently falls
+        back to standard PIDs only - same as if you'd chosen "skip" by hand.
+        """
+        if not self._auto_detect_attempted:
+            self._auto_detect_attempted = True
+            detected = await self._try_auto_detect_vehicle()
+            if detected:
+                return self.async_show_form(
+                    step_id="auto_vehicle_detected",
+                    data_schema=vol.Schema({}),
+                    description_placeholders=detected,
+                )
+
         return self.async_show_menu(
             step_id="custom_pids",
             menu_options=["custom_pids_csv", "obdb_import", "finish_setup"],
         )
+
+    async def _try_auto_detect_vehicle(self) -> dict[str, str] | None:
+        if not self._vin:
+            return None
+        from . import obdb_importer, vin_decoder
+
+        session = async_get_clientsession(self.hass)
+        decoded = await vin_decoder.decode_vin(session, self._vin)
+        if decoded is None:
+            _LOGGER.debug("NHTSA could not decode VIN %s", self._vin)
+            return None
+
+        query = f"{decoded.make} {decoded.model}"
+        try:
+            matches = await obdb_importer.search_obdb_repo(session, query)
+        except obdb_importer.ObdbError as err:
+            _LOGGER.debug("OBDb search failed for %s: %s", query, err)
+            return None
+        if not matches:
+            _LOGGER.debug("No OBDb repo match for %s", query)
+            return None
+
+        repo = matches[0].repo_name
+        try:
+            commands = await obdb_importer.fetch_signalset(session, repo, decoded.year)
+            pid_defs = obdb_importer.parse_signalset_to_pid_defs(commands, repo)
+        except obdb_importer.ObdbError as err:
+            _LOGGER.debug("OBDb fetch/parse failed for %s: %s", repo, err)
+            return None
+        if not pid_defs:
+            return None
+
+        self._data[CONF_OBDB_PIDS] = json.dumps([p.to_dict() for p in pid_defs])
+        year_str = str(decoded.year) if decoded.year else "unknown year"
+        last4 = _vin_last4(self._vin)
+        title_parts = [p for p in (year_str if decoded.year else None, decoded.make, decoded.model) if p]
+        self._title = " ".join(title_parts) + (f" (...{last4})" if last4 else "")
+        return {
+            "make": decoded.make,
+            "model": decoded.model,
+            "year": year_str,
+            "repo": repo,
+            "count": str(len(pid_defs)),
+        }
+
+    async def async_step_auto_vehicle_detected(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            return self.async_show_menu(
+                step_id="custom_pids",
+                menu_options=["custom_pids_csv", "obdb_import", "finish_setup"],
+            )
+        return self.async_show_form(step_id="auto_vehicle_detected", data_schema=vol.Schema({}))
 
     async def async_step_finish_setup(self, user_input=None) -> FlowResult:
         self._data[CONF_SCAN_INTERVAL] = DEFAULT_SCAN_INTERVAL
@@ -371,7 +452,10 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if not pid_defs:
                     errors["base"] = "obdb_no_signals"
                 else:
-                    self._data[CONF_OBDB_PIDS] = json.dumps([p.to_dict() for p in pid_defs])
+                    existing_json = self._data.get(CONF_OBDB_PIDS)
+                    existing = json.loads(existing_json) if existing_json else []
+                    existing.extend(p.to_dict() for p in pid_defs)
+                    self._data[CONF_OBDB_PIDS] = json.dumps(existing)
                     return await self.async_step_finish_setup()
 
         return self.async_show_form(

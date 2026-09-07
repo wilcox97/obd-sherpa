@@ -87,7 +87,23 @@ order listed - the common convention, but not something I can verify against
 every vehicle without hardware in hand. Cross-check a couple of imported
 values against your dash/OEM app the first time you use a new vehicle.
 
-## Bluetooth Classic pairing details (incl. OBDLink MX/MX+)
+## Automatic vehicle detection (VIN -> NHTSA -> OBDb)
+
+After connecting to an adapter (any transport), setup queries Mode 09 PID 02
+for the VIN, decodes it via NHTSA's free public vPIC API (no key needed) to
+get Make/Model/Year, then searches OBDb for a matching repo and imports its
+PIDs automatically - no typing a repo name required. If any step fails (VIN
+not readable, NHTSA can't decode it, or no OBDb repo exists for that
+make/model), it fails silently and falls back to standard PIDs only - you
+can still add PIDs manually later via the CSV or OBDb-import menu options,
+or by re-running setup once you know a specific repo name.
+
+Live-tested against the real services: a Bolt EV VIN correctly resolved to
+`OBDb/Chevrolet-Bolt-EV` and imported 107 real PIDs (HV battery temp, charger
+AC voltage/current, etc.). A vehicle with no OBDb coverage (tested against a
+Mercury Mariner) correctly found zero matches and fell through to standard
+PIDs with no error.
+
 
 The setup form for BT Classic has an optional custom PIN field. Order of
 attempts: (1) raw RFCOMM connect with no PIN at all - many cheap SPP dongles
