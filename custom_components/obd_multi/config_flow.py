@@ -45,6 +45,7 @@ from .const import (
 )
 from .elm327 import Elm327Client
 from .pid_formula import FormulaError, parse_custom_pid_csv
+from .storage import async_get_auto_accept, async_set_auto_accept
 from .transport import BleTransport, BtClassicTransport, ElmTransportError, WifiTransport
 
 _LOGGER = logging.getLogger(__name__)
@@ -112,8 +113,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_BLE_UUID_WRITE: uuid_write,
                     CONF_BLE_UUID_NOTIFY: uuid_notify,
                 }
-                self.context["title_placeholders"] = {"name": self._title}
-                return await self.async_step_bluetooth_confirm()
+                return await self._complete_discovery()
 
         # Not connectable as BLE (or UUIDs unknown) - try it as classic SPP with
         # default-PIN auto-pairing before giving up on this discovery.
@@ -128,10 +128,18 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             except ElmTransportError:
                 return self.async_abort(reason="cannot_connect")
             self._data = {CONF_TRANSPORT: TRANSPORT_BT_CLASSIC, CONF_BT_ADDRESS: discovery_info.address}
-            self.context["title_placeholders"] = {"name": self._title}
-            return await self.async_step_bluetooth_confirm()
+            return await self._complete_discovery()
 
         return self.async_abort(reason="cannot_connect")
+
+    async def _complete_discovery(self) -> FlowResult:
+        """After a successful discovery probe: either finish hands-off (if the
+        auto-accept setting is on) or fall back to the normal confirm card."""
+        if await async_get_auto_accept(self.hass):
+            await self._try_auto_detect_vehicle()
+            return await self.async_step_finish_setup()
+        self.context["title_placeholders"] = {"name": self._title}
+        return await self.async_step_bluetooth_confirm()
 
     async def async_step_bluetooth_confirm(self, user_input=None) -> FlowResult:
         if user_input is not None:
@@ -144,7 +152,19 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input=None) -> FlowResult:
         return self.async_show_menu(
             step_id="user",
-            menu_options=[TRANSPORT_WIFI, TRANSPORT_BT_CLASSIC, TRANSPORT_BLE],
+            menu_options=[TRANSPORT_WIFI, TRANSPORT_BT_CLASSIC, TRANSPORT_BLE, "settings"],
+        )
+
+    async def async_step_settings(self, user_input=None) -> FlowResult:
+        current = await async_get_auto_accept(self.hass)
+        if user_input is not None:
+            await async_set_auto_accept(self.hass, user_input["auto_accept_discovered"])
+            return self.async_abort(reason="settings_saved")
+        return self.async_show_form(
+            step_id="settings",
+            data_schema=vol.Schema(
+                {vol.Required("auto_accept_discovered", default=current): bool}
+            ),
         )
 
     # ---------------- WiFi ----------------
@@ -336,7 +356,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if not self._auto_detect_attempted:
             self._auto_detect_attempted = True
             detected = await self._try_auto_detect_vehicle()
-            if detected:
+            if detected and not await async_get_auto_accept(self.hass):
                 return self.async_show_form(
                     step_id="auto_vehicle_detected",
                     data_schema=vol.Schema({}),

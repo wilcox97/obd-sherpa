@@ -6,8 +6,14 @@
         "menu_options": {
           "wifi": "WiFi (TCP)",
           "bt_classic": "Bluetooth Classic (SPP, paired)",
-          "ble": "Bluetooth Low Energy (BLE)"
+          "ble": "Bluetooth Low Energy (BLE)",
+          "settings": "Settings"
         }
+      },
+      "settings": {
+        "title": "OBD Sherpa settings",
+        "description": "When on, devices found via Bluetooth auto-discovery (and the auto-detected-vehicle confirmation) are added immediately with no confirmation tap.",
+        "data": { "auto_accept_discovered": "Auto-accept discovered devices" }
       },
       "bluetooth_confirm": {
         "title": "OBD adapter found",
@@ -67,7 +73,8 @@
       "obdb_no_signals": "That OBDb signalset had no usable PIDs."
     },
     "abort": {
-      "missing_address": "Lost track of the BLE address, please start over."
+      "missing_address": "Lost track of the BLE address, please start over.",
+      "settings_saved": "Setting saved."
     }
   }
 }

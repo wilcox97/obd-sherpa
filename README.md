@@ -104,6 +104,25 @@ AC voltage/current, etc.). A vehicle with no OBDb coverage (tested against a
 Mercury Mariner) correctly found zero matches and fell through to standard
 PIDs with no error.
 
+## Auto-accept discovered devices (skip confirmation cards)
+
+Settings → Devices & Services → Add Integration → OBD Multi → **Settings**
+(this is a menu option in the setup flow, not a separate config entry) → toggle
+"Auto-accept discovered devices" on. This is a global, persistent setting
+(stored independently of any vehicle entry, so it applies from the very first
+discovery even before you've added anything).
+
+With it on:
+- A BLE/Bluetooth-Classic dongle matching the manifest's name filters gets
+  added the moment it's discovered and connects successfully - no "found it,
+  add it?" tap required.
+- The "vehicle auto-detected" card (VIN/NHTSA/OBDb result) is also skipped
+  wherever it would otherwise appear, including during a manual WiFi/BT/BLE
+  add - detected PIDs still get imported, just without pausing for a tap.
+
+With it off (the default), both cards behave as originally described above.
+
+## Bluetooth Classic pairing details (incl. OBDLink MX/MX+)
 
 The setup form for BT Classic has an optional custom PIN field. Order of
 attempts: (1) raw RFCOMM connect with no PIN at all - many cheap SPP dongles
