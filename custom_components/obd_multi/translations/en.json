@@ -1,0 +1,54 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Select adapter connection type",
+        "menu_options": {
+          "wifi": "WiFi (TCP)",
+          "bt_classic": "Bluetooth Classic (SPP, paired)",
+          "ble": "Bluetooth Low Energy (BLE)"
+        }
+      },
+      "bluetooth_confirm": {
+        "title": "OBD adapter found",
+        "description": "Found and connected to {name}. Add it?"
+      },
+      "wifi": {
+        "title": "WiFi ELM327",
+        "data": { "host": "Host / IP address", "port": "Port" }
+      },
+      "bt_classic": {
+        "title": "Bluetooth Classic ELM327",
+        "description": "{hint}",
+        "data": { "bt_address": "MAC address" }
+      },
+      "ble": {
+        "title": "Select nearby BLE OBD adapter",
+        "data": { "ble_address": "Device" }
+      },
+      "ble_manual": {
+        "title": "Enter BLE adapter address manually",
+        "data": { "ble_address": "MAC address" }
+      },
+      "ble_uuids": {
+        "title": "Manual GATT UUIDs for {address}",
+        "description": "Auto-detection didn't match this adapter's UUIDs. Find them with a BLE scanner app (e.g. nRF Connect) - look for a service with a write and a notify characteristic.",
+        "data": { "ble_uuid_write": "Write characteristic UUID", "ble_uuid_notify": "Notify characteristic UUID" }
+      },
+      "custom_pids": {
+        "title": "Custom PIDs (optional)",
+        "description": "Paste a custom-PID CSV now, or leave blank and add later via the reload_custom_pids service. Columns: name,mode,pid,bytes,formula,unit,min,max,header",
+        "data": { "custom_pid_csv": "CSV content" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not connect to the adapter.",
+      "invalid_csv": "CSV could not be parsed: {error_detail}",
+      "no_devices_found": "No BLE OBD-like devices seen yet - enter the address manually.",
+      "device_not_found": "That BLE device isn't currently visible."
+    },
+    "abort": {
+      "missing_address": "Lost track of the BLE address, please start over."
+    }
+  }
+}

@@ -1,0 +1,17 @@
+reload_custom_pids:
+  name: Reload custom PIDs
+  description: Replace the active custom PID list with a new CSV (standard PIDs are always kept).
+  fields:
+    entry_id:
+      name: Config entry ID
+      description: The OBD Multi config entry to update (see entry's Settings > Devices & Services page).
+      required: true
+      selector:
+        text:
+    csv:
+      name: CSV content
+      description: Custom PID CSV text (name,mode,pid,bytes,formula,unit,min,max,header).
+      required: true
+      selector:
+        text:
+          multiline: true
