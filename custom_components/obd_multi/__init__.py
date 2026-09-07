@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 import voluptuous as vol
@@ -17,6 +18,7 @@ from .const import (
     CONF_BT_ADDRESS,
     CONF_CUSTOM_PID_CSV,
     CONF_HOST,
+    CONF_OBDB_PIDS,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
     CONF_TRANSPORT,
@@ -87,6 +89,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     csv_text = entry.data.get(CONF_CUSTOM_PID_CSV, "")
     if csv_text:
         pid_defs.extend(parse_custom_pid_csv(csv_text))
+    obdb_json = entry.data.get(CONF_OBDB_PIDS, "")
+    if obdb_json:
+        pid_defs.extend(PidDefinition.from_dict(d) for d in json.loads(obdb_json))
 
     coordinator = ObdCoordinator(
         hass, client, pid_defs, entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL)

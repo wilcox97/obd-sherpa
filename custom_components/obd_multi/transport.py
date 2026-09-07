@@ -102,19 +102,21 @@ class BtClassicTransport(ElmTransport):
         return {addr: name for addr, name in found}
 
     @staticmethod
-    async def try_pair(address: str) -> bool:
-        """Best-effort automatic pairing using common default PINs.
+    async def try_pair(address: str, custom_pins: list[str] | None = None) -> bool:
+        """Best-effort automatic pairing.
 
-        Many cheap ELM327 SPP dongles use "Just Works"/no real auth and will
-        accept an RFCOMM connect without a formal OS pairing step at all, so
-        this is tried first; only if that fails do we attempt bluetoothctl
-        pairing with the two common default PINs.
+        Tries, in order: (1) a raw RFCOMM connect with no pairing at all, since
+        many cheap SPP dongles use "Just Works"/no real auth; (2) any
+        custom_pins supplied by the user (e.g. an OBDLink MX/MX+ configured
+        with a non-default Bluetooth PIN via the OBDLink app); (3) the two
+        common hardcoded defaults.
         """
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, BtClassicTransport._try_pair_sync, address)
+        pins_to_try = list(custom_pins or []) + list(BtClassicTransport.DEFAULT_PINS)
+        return await loop.run_in_executor(None, BtClassicTransport._try_pair_sync, address, pins_to_try)
 
     @staticmethod
-    def _try_pair_sync(address: str) -> bool:
+    def _try_pair_sync(address: str, pins_to_try: list[str]) -> bool:
         import subprocess
 
         try:
@@ -128,7 +130,7 @@ class BtClassicTransport(ElmTransport):
         except Exception:  # noqa: BLE001
             pass
 
-        for pin in BtClassicTransport.DEFAULT_PINS:
+        for pin in pins_to_try:
             try:
                 subprocess.run(
                     ["bluetoothctl", "pair", address],

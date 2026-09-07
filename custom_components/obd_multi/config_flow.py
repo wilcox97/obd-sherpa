@@ -13,6 +13,7 @@ Pairing/discovery summary:
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -21,6 +22,7 @@ from homeassistant import config_entries
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import (
     CONF_BLE_ADDRESS,
@@ -28,7 +30,9 @@ from .const import (
     CONF_BLE_UUID_WRITE,
     CONF_BT_ADDRESS,
     CONF_CUSTOM_PID_CSV,
+    CONF_CUSTOM_PIN,
     CONF_HOST,
+    CONF_OBDB_PIDS,
     CONF_PORT,
     CONF_SCAN_INTERVAL,
     CONF_TRANSPORT,
@@ -165,25 +169,33 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_bt_classic(self, user_input=None) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            transport = BtClassicTransport(user_input[CONF_BT_ADDRESS])
-            try:
-                client = Elm327Client(transport)
-                await client.connect_and_init()
-                self._title = await _vehicle_title(client, f"OBD (BT {user_input[CONF_BT_ADDRESS]})")
-                await client.close()
-            except ElmTransportError as err:
-                _LOGGER.debug("BT classic probe failed: %s", err)
+            custom_pin = user_input.get(CONF_CUSTOM_PIN, "").strip()
+            paired = await BtClassicTransport.try_pair(
+                user_input[CONF_BT_ADDRESS], custom_pins=[custom_pin] if custom_pin else None
+            )
+            if not paired:
                 errors["base"] = "cannot_connect"
             else:
-                self._data = {
-                    CONF_TRANSPORT: TRANSPORT_BT_CLASSIC,
-                    CONF_BT_ADDRESS: user_input[CONF_BT_ADDRESS],
-                }
-                return await self.async_step_custom_pids()
+                transport = BtClassicTransport(user_input[CONF_BT_ADDRESS])
+                try:
+                    client = Elm327Client(transport)
+                    await client.connect_and_init()
+                    self._title = await _vehicle_title(client, f"OBD (BT {user_input[CONF_BT_ADDRESS]})")
+                    await client.close()
+                except ElmTransportError as err:
+                    _LOGGER.debug("BT classic probe failed: %s", err)
+                    errors["base"] = "cannot_connect"
+                else:
+                    self._data = {
+                        CONF_TRANSPORT: TRANSPORT_BT_CLASSIC,
+                        CONF_BT_ADDRESS: user_input[CONF_BT_ADDRESS],
+                    }
+                    return await self.async_step_custom_pids()
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_BT_ADDRESS): str,
+                vol.Optional(CONF_CUSTOM_PIN, default=""): str,
             }
         )
         return self.async_show_form(
@@ -191,8 +203,10 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=schema,
             errors=errors,
             description_placeholders={
-                "hint": "Pair the adapter in your OS Bluetooth settings first, "
-                "then enter its MAC address here (e.g. AA:BB:CC:DD:EE:FF)."
+                "hint": "Enter the adapter's MAC address (e.g. AA:BB:CC:DD:EE:FF). "
+                "We'll try connecting with no PIN first, then any custom PIN you "
+                "enter below (e.g. an OBDLink MX/MX+ set to a non-default PIN via "
+                "the OBDLink app), then the common defaults 1234/0000."
             },
         )
 
@@ -299,7 +313,17 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # ---------------- Custom PIDs (optional) ----------------
 
     async def async_step_custom_pids(self, user_input=None) -> FlowResult:
-        """Optional: paste/import a custom-PID CSV. Skip to finish with just standard PIDs."""
+        """Optional: paste a CSV, import from OBDb, or skip and finish with just standard PIDs."""
+        return self.async_show_menu(
+            step_id="custom_pids",
+            menu_options=["custom_pids_csv", "obdb_import", "finish_setup"],
+        )
+
+    async def async_step_finish_setup(self, user_input=None) -> FlowResult:
+        self._data[CONF_SCAN_INTERVAL] = DEFAULT_SCAN_INTERVAL
+        return self.async_create_entry(title=self._title, data=self._data)
+
+    async def async_step_custom_pids_csv(self, user_input=None) -> FlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             csv_text = user_input.get(CONF_CUSTOM_PID_CSV, "").strip()
@@ -309,7 +333,7 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 except FormulaError as err:
                     errors["base"] = "invalid_csv"
                     return self.async_show_form(
-                        step_id="custom_pids",
+                        step_id="custom_pids_csv",
                         data_schema=vol.Schema(
                             {vol.Optional(CONF_CUSTOM_PID_CSV, default=csv_text): str}
                         ),
@@ -317,11 +341,51 @@ class ObdMultiConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         description_placeholders={"error_detail": str(err)},
                     )
             self._data[CONF_CUSTOM_PID_CSV] = csv_text
-            self._data[CONF_SCAN_INTERVAL] = DEFAULT_SCAN_INTERVAL
-            return self.async_create_entry(title=self._title, data=self._data)
+            return await self.async_step_finish_setup()
 
         return self.async_show_form(
-            step_id="custom_pids",
+            step_id="custom_pids_csv",
             data_schema=vol.Schema({vol.Optional(CONF_CUSTOM_PID_CSV, default=""): str}),
             errors=errors,
+        )
+
+    # ---------------- OBDb import (optional) ----------------
+
+    async def async_step_obdb_import(self, user_input=None) -> FlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            from . import obdb_importer
+
+            repo = user_input["obdb_repo"].strip()
+            year_str = user_input.get("obdb_year", "").strip()
+            year = int(year_str) if year_str.isdigit() else None
+
+            session = async_get_clientsession(self.hass)
+            try:
+                commands = await obdb_importer.fetch_signalset(session, repo, year)
+                pid_defs = obdb_importer.parse_signalset_to_pid_defs(commands, repo)
+            except obdb_importer.ObdbError as err:
+                _LOGGER.debug("OBDb import failed for %s: %s", repo, err)
+                errors["base"] = "obdb_fetch_failed"
+            else:
+                if not pid_defs:
+                    errors["base"] = "obdb_no_signals"
+                else:
+                    self._data[CONF_OBDB_PIDS] = json.dumps([p.to_dict() for p in pid_defs])
+                    return await self.async_step_finish_setup()
+
+        return self.async_show_form(
+            step_id="obdb_import",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("obdb_repo"): str,
+                    vol.Optional("obdb_year", default=""): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "hint": "Repo name exactly as it appears at github.com/OBDb "
+                "(e.g. Chevrolet-Bolt-EV, Ford-Mustang). Year is optional - "
+                "only needed if that vehicle has model-year-specific overrides."
+            },
         )

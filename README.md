@@ -65,7 +65,42 @@ Standard Mode 01 PIDs (RPM, coolant temp, speed, throttle, fuel level,
 MAF, fuel trims, O2 voltage, control module voltage, etc.) are always
 active and don't need to be listed in your CSV.
 
-## Known limitations (v0.1)
+## OBDb import (vehicle-specific PIDs from the community database)
+
+During setup, instead of (or alongside) a CSV, you can pick "Import from
+OBDb" and give a repo name exactly as it appears at github.com/OBDb, e.g.
+`Chevrolet-Bolt-EV` or `Ford-Mustang`. This fetches that vehicle's real
+`signalsets/v3/default.json` (plus a model-year override file if you give a
+year and one exists), and adds every signal in it as a PID sensor.
+
+This is intentionally *not* a static "top N vehicles" list baked into the
+integration - OBDb is a living, community-maintained catalog covering
+everything from Bolts to Mustangs to oddball trims, and importing live means
+you get whatever's been documented as of today rather than a snapshot that
+goes stale. If your exact vehicle isn't there yet, OBDb takes requests
+(github.com/OBDb).
+
+Caveat: OBDb signals are specified as bit offset + bit length + linear scale,
+not whole-byte formulas. When a command block has more than one signal and no
+explicit bit index, this importer assumes they're packed sequentially in the
+order listed - the common convention, but not something I can verify against
+every vehicle without hardware in hand. Cross-check a couple of imported
+values against your dash/OEM app the first time you use a new vehicle.
+
+## Bluetooth Classic pairing details (incl. OBDLink MX/MX+)
+
+The setup form for BT Classic has an optional custom PIN field. Order of
+attempts: (1) raw RFCOMM connect with no PIN at all - many cheap SPP dongles
+don't enforce auth; (2) your custom PIN, if you entered one - this is for
+adapters like the OBDLink MX/MX+ that support setting a non-default
+Bluetooth PIN via the OBDLink app's Bluetooth settings; (3) the common
+defaults `1234` and `0000`.
+
+Auto-discovery (`async_step_bluetooth`) does the same thing but only tries
+the hardcoded defaults, since there's no custom PIN to supply in that flow -
+if your adapter uses a custom PIN, add it manually via the BT Classic option
+in the main menu instead of waiting for discovery.
+
 
 - Mode 22 PIDs are vehicle-specific by nature; there's no OBDb/WiCAN
   auto-lookup here yet - you supply your own CSV per vehicle.

@@ -89,22 +89,62 @@ class PidDefinition:
     mode: str
     pid: str
     n_bytes: int
-    formula: str
+    formula: str | None = None
     unit: str | None = None
     device_class: str | None = None
     state_class: str | None = "measurement"
     header: str | None = None
     min_value: float | None = None
     max_value: float | None = None
+    # Bit-packed linear-scale decode (used for OBDb-imported signals, which are
+    # specified as bit offset/length + mul/add rather than a free-form formula).
+    bit_offset: int | None = None
+    bit_length: int | None = None
+    mul: float | None = None
+    add_offset: float | None = None
     _compiled: object = field(default=None, repr=False, compare=False)
 
     def compiled(self):
+        if self.formula is None:
+            return None
         if self._compiled is None:
             self._compiled = compile_formula(self.formula)
         return self._compiled
 
     def decode(self, data_bytes: list[int]) -> float:
-        return eval_formula(self.compiled(), data_bytes)
+        if self.formula is not None:
+            return eval_formula(self.compiled(), data_bytes)
+        if self.bit_offset is not None and self.bit_length is not None:
+            raw_int = 0
+            for b in data_bytes:
+                raw_int = (raw_int << 8) | b
+            total_bits = len(data_bytes) * 8
+            shift = total_bits - self.bit_offset - self.bit_length
+            if shift < 0:
+                raise FormulaError(
+                    f"{self.key}: bit_offset/bit_length ({self.bit_offset}/{self.bit_length}) "
+                    f"exceeds {total_bits}-bit payload"
+                )
+            mask = (1 << self.bit_length) - 1
+            value = (raw_int >> shift) & mask
+            value = value * (self.mul if self.mul is not None else 1)
+            value += self.add_offset if self.add_offset is not None else 0
+            return value
+        raise FormulaError(f"{self.key}: no formula or bit-decode fields set")
+
+    def to_dict(self) -> dict:
+        return {
+            "key": self.key, "name": self.name, "mode": self.mode, "pid": self.pid,
+            "n_bytes": self.n_bytes, "formula": self.formula, "unit": self.unit,
+            "device_class": self.device_class, "state_class": self.state_class,
+            "header": self.header, "min_value": self.min_value, "max_value": self.max_value,
+            "bit_offset": self.bit_offset, "bit_length": self.bit_length,
+            "mul": self.mul, "add_offset": self.add_offset,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PidDefinition":
+        return cls(**data)
 
 
 def parse_custom_pid_csv(csv_text: str) -> list[PidDefinition]:

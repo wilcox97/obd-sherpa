@@ -12,6 +12,8 @@ CONF_BLE_UUID_NOTIFY = "ble_uuid_notify"
 CONF_SCAN_INTERVAL = "scan_interval"
 CONF_HEADER = "header"
 CONF_CUSTOM_PID_CSV = "custom_pid_csv"
+CONF_CUSTOM_PIN = "custom_pin"
+CONF_OBDB_PIDS = "obdb_pids"
 
 TRANSPORT_WIFI = "wifi"
 TRANSPORT_BT_CLASSIC = "bt_classic"
