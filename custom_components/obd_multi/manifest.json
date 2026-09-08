@@ -10,10 +10,8 @@
   "dependencies": ["bluetooth_adapters"],
   "bluetooth": [
     { "local_name": "OBD*" },
-    { "local_name": "*ELM327*" },
     { "local_name": "VEEPEAK*" },
     { "local_name": "VGATE*" },
-    { "local_name": "iCar*" },
-    { "local_name": "*LELINK*" }
+    { "local_name": "iCar*" }
   ]
 }
